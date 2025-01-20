@@ -1,0 +1,19 @@
+global:
+  scrape_interval:     30s 
+  evaluation_interval: 30s 
+
+  external_labels:
+      monitor: 'DSBD'
+
+rule_files:
+  - 'alert.rules'
+
+
+scrape_configs:
+  - job_name: 'data-collector'
+    static_configs:
+      - targets: ['data-collector:8000']
+  
+  - job_name: 'grpc-server'
+    static_configs:
+      - targets: ['grpc_server:9100']

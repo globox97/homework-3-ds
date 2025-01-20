@@ -1,0 +1,207 @@
+version: '3.7'
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server  
+    container_name: server
+    ports:
+      - "50051:50051"
+      - "9100:9100" # Porta Prometheus
+    environment:
+      - MYSQL_HOST=host.docker.internal
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=root
+      - MYSQL_DATABASE=db
+      - MYSQL_PORT=3306
+      - PYTHONUNBUFFERED=1
+    networks:
+      - app-network
+
+  data_collector2:
+    build:
+      context: .
+      dockerfile: Dockerfile.data_collector  
+    container_name: data_collector2
+    depends_on:
+      - kafka_broker-1
+      - kafka_broker-2
+      - kafka_broker-3
+    environment:
+      - MYSQL_HOST=host.docker.internal
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=root
+      - MYSQL_DATABASE=db
+      - MYSQL_PORT=3306
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8000:8000" # Per esporre le metriche di Prometheus  
+    networks:
+      - app-network
+    restart: always
+
+  grpc-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: grpc-client
+    depends_on:
+      - server
+    ports:
+      - "5000:5000"  # Espone il server Flask sulla porta 5000
+    networks:
+      - app-network
+
+  alert-system:
+    build:
+      context: .
+      dockerfile: Dockerfile.alert_system
+    container_name: alert-system
+    depends_on:
+      - kafka_broker-1
+      - kafka_broker-2
+      - kafka_broker-3
+    networks:
+      - app-network
+
+  alert-notifier-system:
+    build:
+      context: .
+      dockerfile: Dockerfile.alert_notifier_system
+    container_name: alert-notifier-system
+    depends_on:
+      - kafka_broker-1
+      - kafka_broker-2
+      - kafka_broker-3
+    networks:
+      - app-network
+
+
+  zookeeper_:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper_
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - app-network
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:latest
+    hostname: schema_registry
+    depends_on:
+      - kafka_broker-1
+      - kafka_broker-2
+      - kafka_broker-3
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema_registry
+      SCHEMA_REGISTRY_KAFKASTORE_CONNECTION_URL: 'zookeeper:2181'
+      SCHEMA_REGISTRY_LISTENERS: http://schema_registry:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka-broker-2:9092,PLAINTEXT_INTERNAL://localhost:29092
+      SCHEMA_REGISTRY_DEBUG: 'true'
+    networks:
+      - app-network
+
+  kafka_broker-1:
+    image: confluentinc/cp-kafka:latest
+    hostname: kafka-broker-1
+    container_name: kafka_broker-1
+    ports:
+      - "19092:19092"
+    depends_on:
+      - zookeeper_
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka_broker-1:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+    networks:
+      - app-network
+
+
+  kafka_broker-2:
+    image: confluentinc/cp-kafka:latest
+    hostname: kafka-broker-2
+    container_name: kafka_broker-2
+    ports:
+      - "29092:29092"
+    depends_on:
+      - zookeeper_
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka_broker-2:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+    networks:
+      - app-network
+
+  kafka_broker-3:
+    image: confluentinc/cp-kafka:latest
+    hostname: kafka-broker-3
+    container_name: kafka_broker-3
+    ports:
+      - "39092:39092"
+    depends_on:
+      - zookeeper_
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka_broker-3:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+    networks:
+      - app-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+    - ./prometheus.yml:/etc/prometheus/prometheus.yml  # Mappa il file di configurazione
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090" 
+    links:
+      - cadvisor:cadvisor
+    depends_on:
+      - cadvisor
+    restart: always
+    deploy:
+      mode: global
+    networks:
+      - app-network
+
+  cadvisor:
+    image: google/cadvisor
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - 8080:8080
+    restart: always
+    deploy:
+      mode: global
+    networks:
+      - app-network
+
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+
+  
